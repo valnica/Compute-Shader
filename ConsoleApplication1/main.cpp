@@ -4,6 +4,7 @@
 #include <fstream>
 #include <d3dcompiler.h>
 #include <Windows.h>
+#include "FPSTimer.h"
 
 #include <crtdbg.h>
 #define _CRTDBG_MAP_ALLOC
@@ -27,10 +28,10 @@ HRESULT CreateDevice(ID3D11Device** device, ID3D11DeviceContext** context)
 {
 	UINT createDeviceFlag = 0;
 
-	const D3D_FEATURE_LEVEL lvl[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0,
+	const D3D_FEATURE_LEVEL flvl[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0,
 		D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0 };
 
-	auto hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlag, lvl, _countof(lvl), D3D11_SDK_VERSION, device, nullptr, context);
+	auto hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlag, flvl, sizeof(flvl) / sizeof(D3D_FEATURE_LEVEL), D3D11_SDK_VERSION, device, nullptr, context);
 
 	return hr;
 }
@@ -54,6 +55,8 @@ HRESULT CreateComputeSahder(ID3D11Device* device, ID3D11ComputeShader** computeS
 
 HRESULT CreateStructuredBuffer(ID3D11Device* device,ID3D11Buffer** buffer,UINT size,UINT numElement,void* data)
 {
+	*buffer = nullptr;
+
 	//Bufferの作成
 	D3D11_BUFFER_DESC bufferDesc;
 	ZeroMemory(&bufferDesc, sizeof(bufferDesc));
@@ -65,7 +68,7 @@ HRESULT CreateStructuredBuffer(ID3D11Device* device,ID3D11Buffer** buffer,UINT s
 	if (data)
 	{
 		D3D11_SUBRESOURCE_DATA subResource;
-		subResource.pSysMem = &g_buf;
+		subResource.pSysMem = data;
 
 		auto hr = device->CreateBuffer(&bufferDesc, &subResource, buffer);
 		return hr;
@@ -78,6 +81,7 @@ HRESULT CreateStructuredBuffer(ID3D11Device* device,ID3D11Buffer** buffer,UINT s
 HRESULT CreateBufferShaderResourceView(ID3D11Device* device,ID3D11Buffer* buffer,ID3D11ShaderResourceView** resourceView)
 {
 	D3D11_BUFFER_DESC bufferDesc;
+	ZeroMemory(&bufferDesc, sizeof(bufferDesc));
 	buffer->GetDesc(&bufferDesc);
 
 	D3D11_SHADER_RESOURCE_VIEW_DESC resourceViewDesc;
@@ -96,6 +100,7 @@ HRESULT CreateBufferShaderResourceView(ID3D11Device* device,ID3D11Buffer* buffer
 HRESULT CraeteBufferUnorderedAccessView(ID3D11Device* device,ID3D11Buffer* buffer,ID3D11UnorderedAccessView** accessView)
 {
 	D3D11_BUFFER_DESC bufferDesc;
+	ZeroMemory(&bufferDesc, sizeof(bufferDesc));
 	buffer->GetDesc(&bufferDesc);
 
 	D3D11_UNORDERED_ACCESS_VIEW_DESC accessViewDesc;
@@ -110,26 +115,49 @@ HRESULT CraeteBufferUnorderedAccessView(ID3D11Device* device,ID3D11Buffer* buffe
 	return hr;
 }
 
-void RunComputeShader(ID3D11DeviceContext* context, ID3D11ComputeShader* computeShader, UINT numViews, ID3D11ShaderResourceView* resourceViews, ID3D11UnorderedAccessView* accessView, UINT x, UINT y, UINT z)
+void RunComputeShader(ID3D11DeviceContext* context, ID3D11ComputeShader* computeShader, UINT numViews, ID3D11ShaderResourceView** resourceViews, ID3D11UnorderedAccessView* accessView, UINT x, UINT y, UINT z)
 {
 	//Compute Shaderを走らせる
 	context->CSSetShader(computeShader, nullptr, 0);
-	context->CSSetShaderResources(0, numViews, &resourceViews);
+	context->CSSetShaderResources(0, numViews,resourceViews);
 	context->CSSetUnorderedAccessViews(0, 1, &accessView, nullptr);
 
 	context->Dispatch(x, y, z);
+
+	context->CSSetShader(nullptr, nullptr, 0);
+
+	ID3D11UnorderedAccessView* ppUAViewnullptr[1] = { nullptr };
+	context->CSSetUnorderedAccessViews(0, 1, ppUAViewnullptr, nullptr);
+
+	ID3D11ShaderResourceView* ppSRVnullptr[2] = { nullptr, nullptr };
+	context->CSSetShaderResources(0, 2, ppSRVnullptr);
+
+	ID3D11Buffer* ppCBnullptr[1] = { nullptr };
+	context->CSSetConstantBuffers(0, 1, ppCBnullptr);
 }
 
 int main()
 {
+	FPSTimer timer(60);
+
+	LARGE_INTEGER freq;
+
+	QueryPerformanceCounter(&freq);
+
 	//メモリリーク検出
 	::_CrtSetDbgFlag(_CRTDBG_LEAK_CHECK_DF | _CRTDBG_ALLOC_MEM_DF);
+
+	LARGE_INTEGER start, end;
+	QueryPerformanceCounter(&start);
 
 	for (int i = 0; i < numElement; i++)
 	{
 		g_buf[i].s32 = i;
 		g_buf[i].f32 = (float)(i) * 0.25f;
 	}
+	QueryPerformanceCounter(&end);
+
+	//std::cout << (double)(end.QuadPart - start.QuadPart) / freq.QuadPart << std::endl;
 
 	ID3D11Device* device = nullptr;
 	ID3D11DeviceContext* context = nullptr;;
@@ -223,8 +251,10 @@ int main()
 
 	ID3D11ShaderResourceView* shaderResourceViews[] = { resourceView };
 
+	QueryPerformanceCounter(&start);
+
 	//Compute Shaderを走らせる
-	RunComputeShader(context, computeShader, 1, *shaderResourceViews, accessView, 1, 1, 1);
+	RunComputeShader(context, computeShader, 1, shaderResourceViews, accessView, numElement, 1, 1);
 
 	//データの取り出し
 	ID3D11Buffer* cloneBuf = nullptr;
@@ -240,7 +270,7 @@ int main()
 
 	if (SUCCEEDED(hr))
 	{
-		context->CopyResource(cloneBuf, buffer);
+		context->CopyResource(cloneBuf, resultBuffer);
 	}
 	else if (FAILED(hr))
 	{
@@ -255,7 +285,7 @@ int main()
 
 
 	D3D11_MAPPED_SUBRESOURCE subRes;
-	BufType* bufType;
+	BufType* bufType = nullptr;
 
 	hr = context->Map(cloneBuf, 0, D3D11_MAP_READ, 0, &subRes);
 
@@ -286,6 +316,10 @@ int main()
 	}
 
 	context->Unmap(cloneBuf, 0);
+
+	QueryPerformanceCounter(&end);
+
+	//std::cout << (double)(end.QuadPart - start.QuadPart) / freq.QuadPart << std::endl;
 
 	//後処理
 	device->Release();

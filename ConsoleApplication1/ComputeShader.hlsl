@@ -20,6 +20,6 @@ void main( const CSInput GSInput )
 {
     int index = GSInput.dispatch.x;
 
-    data[index].i = input[index].i;
-    data[index].f = input[index].f;
+    data[index].i = input[index].i + 2;
+    data[index].f = input[index].f + 0.2f;
 }
